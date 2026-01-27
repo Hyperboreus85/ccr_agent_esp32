@@ -25,32 +25,33 @@ BatchUploader uploader;
 float calibGain = 1.0f;
 float calibOffset = 0.0f;
 bool calibPresent = false;
+
 bool assistedMode = false;
+
 String inputLine;
 unsigned long lastLogMs = 0;
 bool lastWifiConnected = false;
 bool lastNtpSynced = false;
 
-void applyCalibration() {
+static void applyCalibration() {
   sampler.setCalibration(calibGain, calibOffset, calibPresent);
 }
 
-void saveCalibration() {
+static void saveCalibration() {
   prefs.putFloat("gain", calibGain);
   prefs.putFloat("offset", calibOffset);
   prefs.putBool("has", calibPresent);
   applyCalibration();
 }
 
-void handleCommand(const String& line) {
+static void handleCommand(const String& line) {
   String cmd = line;
   cmd.trim();
-  if (cmd.length() == 0) {
-    return;
-  }
+  if (cmd.length() == 0) return;
 
   if (cmd.equalsIgnoreCase("calib show")) {
-    Serial.printf("[CALIB] gain=%.4f offset=%.4f present=%s\n", calibGain, calibOffset, calibPresent ? "yes" : "no");
+    Serial.printf("[CALIB] gain=%.4f offset=%.4f present=%s\n",
+                  calibGain, calibOffset, calibPresent ? "yes" : "no");
     return;
   }
 
@@ -95,12 +96,14 @@ void handleCommand(const String& line) {
 void setup() {
   Serial.begin(115200);
   delay(500);
+
   Serial.printf("CCR ESP32 firmware %s\n", Config::kFirmwareVersion);
 
   prefs.begin("calib", false);
   calibGain = prefs.getFloat("gain", 1.0f);
   calibOffset = prefs.getFloat("offset", 0.0f);
   calibPresent = prefs.getBool("has", false);
+
   if (!calibPresent) {
     Serial.println("[CALIB] No calibration found. Using defaults.");
   }
@@ -110,9 +113,11 @@ void setup() {
   timeSync.begin();
 
   sampler.begin();
+
   if (!LittleFS.begin(true)) {
     Serial.println("[FS] LittleFS mount failed. Persistence disabled.");
   }
+
   uploader.begin(CCR_BASE_URL, DEVICE_ID, CCR_API_KEY);
 
   Serial.println("[SYSTEM] Setup complete. Type 'help' for commands.");
@@ -122,13 +127,13 @@ void loop() {
   wifiManager.update();
   timeSync.update();
 
-  bool wifiConnected = wifiManager.isConnected();
+  const bool wifiConnected = wifiManager.isConnected();
   if (wifiConnected != lastWifiConnected) {
     Serial.printf("[WIFI] %s\n", wifiConnected ? "connected" : "disconnected");
     lastWifiConnected = wifiConnected;
   }
 
-  bool ntpSynced = timeSync.isSynced();
+  const bool ntpSynced = timeSync.isSynced();
   if (ntpSynced != lastNtpSynced) {
     Serial.printf("[NTP] %s\n", ntpSynced ? "synced" : "not synced");
     lastNtpSynced = ntpSynced;
@@ -147,6 +152,7 @@ void loop() {
   VoltageSample sample;
   if (sampler.update(sample)) {
     sample.ts_ms = timeSync.nowMs();
+
     if (!timeSync.isSynced()) {
       sample.flags |= FLAG_NTP_NOT_SYNC;
     }
@@ -154,7 +160,7 @@ void loop() {
       sample.flags |= FLAG_WIFI_DOWN;
     }
 
-    bool saturated = (sample.flags & FLAG_ADC_SATURATED) != 0;
+    const bool saturated = (sample.flags & FLAG_ADC_SATURATED) != 0;
     if (!saturated) {
       eventDetector.addSample(sample);
       uploader.addSample(sample);
