@@ -110,7 +110,7 @@ void setup() {
   timeSync.begin();
 
   sampler.begin();
-  if (!LittleFS.begin()) {
+  if (!LittleFS.begin(true)) {
     Serial.println("[FS] LittleFS mount failed. Persistence disabled.");
   }
   uploader.begin(CCR_BASE_URL, DEVICE_ID, CCR_API_KEY);
