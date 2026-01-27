@@ -1,49 +1,65 @@
 #include <Arduino.h>
-#include <WiFi.h>
+#include <Preferences.h>
+#include <LittleFS.h>
+
+#include "BatchUploader.h"
+#include "Config.h"
+#include "EventDetector.h"
+#include "TimeSync.h"
+#include "VoltageSampler.h"
+#include "WifiManager.h"
+
+#include "secrets.h"
 
 namespace {
-constexpr uint8_t kAdcPin = 34; // GPIO34 (ADC1)
-constexpr uint32_t kSampleWindowMs = 200;
-constexpr uint32_t kPrintIntervalMs = 1000;
-constexpr uint32_t kSampleIntervalUs = 200; // ~5000 samples/sec
-constexpr float kAdcRefVoltage = 3.3f;
-constexpr float kAdcMax = 4095.0f;
-constexpr float kCalibration = 1.0f; // adjust after calibration
-constexpr uint16_t kNoSignalThreshold = 8; // ADC counts
-
-constexpr const char* kWifiSsid = "WIFI";
-constexpr const char* kWifiPassword = "wifi1234";
-
-constexpr size_t kMaxSamples = 2000;
+constexpr uint32_t kSampleLogIntervalMs = 5000;
 }
 
-enum SampleFlags : uint32_t {
-  FLAG_NONE = 0,
-  FLAG_NO_SIGNAL = 1 << 0,
-  FLAG_ADC_SATURATED = 1 << 1,
-};
+Preferences prefs;
+WifiManager wifiManager;
+TimeSync timeSync;
+VoltageSampler sampler(Config::kDefaultAdcPin);
+EventDetector eventDetector;
+BatchUploader uploader;
 
-unsigned long lastPrintMs = 0;
-float calibGain = kCalibration;
+float calibGain = 1.0f;
 float calibOffset = 0.0f;
-bool assistMode = false;
-String inputLine;
+bool calibPresent = false;
 
-void handleCommand(const String& line) {
+bool assistedMode = false;
+
+String inputLine;
+unsigned long lastLogMs = 0;
+bool lastWifiConnected = false;
+bool lastNtpSynced = false;
+
+static void applyCalibration() {
+  sampler.setCalibration(calibGain, calibOffset, calibPresent);
+}
+
+static void saveCalibration() {
+  prefs.putFloat("gain", calibGain);
+  prefs.putFloat("offset", calibOffset);
+  prefs.putBool("has", calibPresent);
+  applyCalibration();
+}
+
+static void handleCommand(const String& line) {
   String cmd = line;
   cmd.trim();
-  if (cmd.length() == 0) {
-    return;
-  }
+  if (cmd.length() == 0) return;
 
   if (cmd.equalsIgnoreCase("calib show")) {
-    Serial.printf("[CALIB] gain=%.4f offset=%.4f\n", calibGain, calibOffset);
+    Serial.printf("[CALIB] gain=%.4f offset=%.4f present=%s\n",
+                  calibGain, calibOffset, calibPresent ? "yes" : "no");
     return;
   }
 
   if (cmd.startsWith("calib gain")) {
     float value = cmd.substring(String("calib gain").length()).toFloat();
     calibGain = value;
+    calibPresent = true;
+    saveCalibration();
     Serial.printf("[CALIB] gain set to %.4f\n", calibGain);
     return;
   }
@@ -51,19 +67,21 @@ void handleCommand(const String& line) {
   if (cmd.startsWith("calib offset")) {
     float value = cmd.substring(String("calib offset").length()).toFloat();
     calibOffset = value;
+    calibPresent = true;
+    saveCalibration();
     Serial.printf("[CALIB] offset set to %.4f\n", calibOffset);
     return;
   }
 
   if (cmd.equalsIgnoreCase("calib assist on")) {
-    assistMode = true;
-    Serial.println("[CALIB] assist ON");
+    assistedMode = true;
+    Serial.println("[CALIB] assisted mode ON");
     return;
   }
 
   if (cmd.equalsIgnoreCase("calib assist off")) {
-    assistMode = false;
-    Serial.println("[CALIB] assist OFF");
+    assistedMode = false;
+    Serial.println("[CALIB] assisted mode OFF");
     return;
   }
 
@@ -79,18 +97,48 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
-  analogReadResolution(12);
-  analogSetPinAttenuation(kAdcPin, ADC_11db);
+  Serial.printf("CCR ESP32 firmware %s\n", Config::kFirmwareVersion);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(kWifiSsid, kWifiPassword);
+  prefs.begin("calib", false);
+  calibGain = prefs.getFloat("gain", 1.0f);
+  calibOffset = prefs.getFloat("offset", 0.0f);
+  calibPresent = prefs.getBool("has", false);
 
-  Serial.println("[BOOT] ESP32 ZMPT101B debug sketch");
-  Serial.printf("[WIFI] Connecting to %s...\n", kWifiSsid);
-  Serial.println("[SYSTEM] Type 'help' for commands.");
+  if (!calibPresent) {
+    Serial.println("[CALIB] No calibration found. Using defaults.");
+  }
+  applyCalibration();
+
+  wifiManager.begin(WIFI_SSID, WIFI_PASSWORD);
+  timeSync.begin();
+
+  sampler.begin();
+
+  if (!LittleFS.begin(true)) {
+    Serial.println("[FS] LittleFS mount failed. Persistence disabled.");
+  }
+
+  uploader.begin(CCR_BASE_URL, DEVICE_ID, CCR_API_KEY);
+
+  Serial.println("[SYSTEM] Setup complete. Type 'help' for commands.");
 }
 
 void loop() {
+  wifiManager.update();
+  timeSync.update();
+
+  const bool wifiConnected = wifiManager.isConnected();
+  if (wifiConnected != lastWifiConnected) {
+    Serial.printf("[WIFI] %s\n", wifiConnected ? "connected" : "disconnected");
+    lastWifiConnected = wifiConnected;
+  }
+
+  const bool ntpSynced = timeSync.isSynced();
+  if (ntpSynced != lastNtpSynced) {
+    Serial.printf("[NTP] %s\n", ntpSynced ? "synced" : "not synced");
+    lastNtpSynced = ntpSynced;
+  }
+
   while (Serial.available()) {
     char c = static_cast<char>(Serial.read());
     if (c == '\n') {
@@ -101,89 +149,44 @@ void loop() {
     }
   }
 
-  static uint16_t samples[kMaxSamples];
-  unsigned long windowStart = millis();
-  unsigned long lastSampleUs = micros();
+  VoltageSample sample;
+  if (sampler.update(sample)) {
+    sample.ts_ms = timeSync.nowMs();
 
-  uint16_t rawMin = 4095;
-  uint16_t rawMax = 0;
-  uint64_t sum = 0;
-  uint32_t count = 0;
-  uint16_t saturatedCount = 0;
+    if (!timeSync.isSynced()) {
+      sample.flags |= FLAG_NTP_NOT_SYNC;
+    }
+    if (!wifiConnected) {
+      sample.flags |= FLAG_WIFI_DOWN;
+    }
 
-  while (millis() - windowStart < kSampleWindowMs) {
-    unsigned long nowUs = micros();
-    if (nowUs - lastSampleUs >= kSampleIntervalUs) {
-      lastSampleUs = nowUs;
-      uint16_t raw = analogRead(kAdcPin);
-      if (count < kMaxSamples) {
-        samples[count] = raw;
-      }
-      rawMin = min(rawMin, raw);
-      rawMax = max(rawMax, raw);
-      sum += raw;
-      if (raw == 0 || raw >= 4095) {
-        saturatedCount++;
-      }
-      count++;
+    const bool saturated = (sample.flags & FLAG_ADC_SATURATED) != 0;
+    if (!saturated) {
+      eventDetector.addSample(sample);
+      uploader.addSample(sample);
+    }
+
+    if (assistedMode) {
+      Serial.printf("[ASSIST] raw_rms=%.3f vrms=%.3f\n", sample.raw_rms, sample.vrms);
+    }
+
+    if (millis() - lastLogMs > kSampleLogIntervalMs) {
+      Serial.printf("[SAMPLE] vrms=%.2f flags=0x%08lx\n", sample.vrms, sample.flags);
+      lastLogMs = millis();
     }
   }
 
-  if (count == 0) {
-    return;
+  VoltageEvent event;
+  if (eventDetector.pollCompletedEvent(event)) {
+    Serial.printf("[EVENT] %s start=%llu end=%llu min=%.2f max=%.2f samples=%u\n",
+                  EventTypeToString(event.type),
+                  static_cast<unsigned long long>(event.start_ts),
+                  static_cast<unsigned long long>(event.end_ts),
+                  event.min_vrms,
+                  event.max_vrms,
+                  static_cast<unsigned int>(event.samples.size()));
+    uploader.addEvent(event);
   }
 
-  float mean = static_cast<float>(sum) / static_cast<float>(count);
-  float sumSq = 0.0f;
-  // RMS AC: remove DC bias by subtracting the window mean.
-  for (uint32_t i = 0; i < count && i < kMaxSamples; ++i) {
-    float centered = static_cast<float>(samples[i]) - mean;
-    sumSq += centered * centered;
-  }
-
-  float rawRms = sqrtf(sumSq / static_cast<float>(count));
-  uint16_t pkpk = rawMax - rawMin;
-  uint32_t flags = FLAG_NONE;
-  if (pkpk < kNoSignalThreshold) {
-    rawRms = 0.0f;
-    flags |= FLAG_NO_SIGNAL;
-  }
-  if (saturatedCount > 0) {
-    flags |= FLAG_ADC_SATURATED;
-  }
-
-  float vAdc = rawRms * (kAdcRefVoltage / kAdcMax);
-  float vMains = vAdc * calibGain + calibOffset;
-  if (flags != FLAG_NONE) {
-    vMains = 0.0f;
-  }
-  float amp = (static_cast<float>(rawMax) - static_cast<float>(rawMin)) / 2.0f;
-
-  unsigned long nowMs = millis();
-  if (nowMs - lastPrintMs >= kPrintIntervalMs) {
-    Serial.printf(
-        "rawMin=%u rawMax=%u offset=%.2f amp=%.2f vrms_adc=%.4f vrms_mains=%.2f flags=0x%02lx wifi=%s ip=%s\n",
-        rawMin,
-        rawMax,
-        mean,
-        amp,
-        vAdc,
-        vMains,
-        flags,
-        WiFi.status() == WL_CONNECTED ? "connected" : "disconnected",
-        WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString().c_str() : "-");
-    lastPrintMs = nowMs;
-  }
-
-  if (assistMode) {
-    Serial.printf("[ASSIST] raw_rms=%.4f pkpk=%u mean=%.2f\n", rawRms, pkpk, mean);
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    static bool loggedIp = false;
-    if (!loggedIp) {
-      Serial.printf("[WIFI] Connected. IP: %s\n", WiFi.localIP().toString().c_str());
-      loggedIp = true;
-    }
-  }
+  uploader.update(wifiConnected, Config::kWindowMs);
 }
