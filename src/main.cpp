@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <Preferences.h>
 #include <LittleFS.h>
+#include <WiFi.h>
+#include <time.h>
 
 #include "BatchUploader.h"
 #include "Config.h"
@@ -130,12 +132,25 @@ void loop() {
   const bool wifiConnected = wifiManager.isConnected();
   if (wifiConnected != lastWifiConnected) {
     Serial.printf("[WIFI] %s\n", wifiConnected ? "connected" : "disconnected");
+    if (wifiConnected) {
+      Serial.printf("[WIFI] ip=%s\n", WiFi.localIP().toString().c_str());
+    }
     lastWifiConnected = wifiConnected;
   }
 
   const bool ntpSynced = timeSync.isSynced();
   if (ntpSynced != lastNtpSynced) {
     Serial.printf("[NTP] %s\n", ntpSynced ? "synced" : "not synced");
+    if (ntpSynced) {
+      time_t epoch = time(nullptr);
+      struct tm timeinfo;
+      gmtime_r(&epoch, &timeinfo);
+      char buf[24];
+      strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
+      Serial.printf("[TIME] utc=%s epoch_ms=%llu\n",
+                    buf,
+                    static_cast<unsigned long long>(timeSync.nowMs()));
+    }
     lastNtpSynced = ntpSynced;
   }
 
