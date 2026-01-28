@@ -3,8 +3,18 @@
 #include <Arduino.h>
 #include <vector>
 
+#if defined(__has_include)
+#if __has_include("AutoVersion.generated.h")
+#include "AutoVersion.generated.h"
+#endif
+#endif
+
+#ifndef FW_VERSION_STR
+#define FW_VERSION_STR "0.1.0.0000000"
+#endif
+
 namespace Config {
-constexpr const char* kFirmwareVersion = "0.1.0";
+constexpr const char* kFirmwareVersion = FW_VERSION_STR;
 
 constexpr uint32_t kSampleRateHz = 2500;
 constexpr uint32_t kWindowMs = 200;
@@ -36,6 +46,9 @@ constexpr uint16_t kSwellEndWindows = 50;
 constexpr uint16_t kCriticalEndWindows = 50;
 
 constexpr float kAdcSaturationThreshold = 0.05f; // 5% samples saturated
+
+constexpr float kNoSignalVrms = 10.0f;
+constexpr uint16_t kNoSignalRawPkPk = 8; // Optional noise guard (ADC counts).
 } // namespace Config
 
 enum SampleFlags : uint32_t {
@@ -45,6 +58,7 @@ enum SampleFlags : uint32_t {
   FLAG_CALIB_MISSING = 1 << 2,
   FLAG_OUT_OF_RANGE_SENSOR = 1 << 3,
   FLAG_WIFI_DOWN = 1 << 4,
+  FLAG_NO_SIGNAL = 1 << 5,
 };
 
 struct VoltageSample {

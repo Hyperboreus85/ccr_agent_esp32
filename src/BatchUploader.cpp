@@ -105,10 +105,11 @@ String BatchUploader::buildSamplesPayload(uint32_t samplePeriodMs) {
 
   for (size_t i = 0; i < samples_.size(); ++i) {
     const auto& sample = samples_[i];
+    float vrms = (sample.flags & FLAG_NO_SIGNAL) ? 0.0f : sample.vrms;
     payload += "[";
     payload += String(static_cast<uint64_t>(sample.ts_ms));
     payload += ",";
-    payload += String(sample.vrms, 3);
+    payload += String(vrms, 3);
     payload += ",";
     payload += String(sample.flags);
     payload += "]";
@@ -141,10 +142,11 @@ String BatchUploader::buildEventPayload(const VoltageEvent& event) {
 
   for (size_t i = 0; i < event.samples.size(); ++i) {
     const auto& sample = event.samples[i];
+    float vrms = (sample.flags & FLAG_NO_SIGNAL) ? 0.0f : sample.vrms;
     payload += "[";
     payload += String(static_cast<uint64_t>(sample.ts_ms));
     payload += ",";
-    payload += String(sample.vrms, 3);
+    payload += String(vrms, 3);
     payload += ",";
     payload += String(sample.flags);
     payload += "]";

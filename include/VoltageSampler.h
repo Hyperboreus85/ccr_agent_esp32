@@ -31,4 +31,5 @@ class VoltageSampler {
 
   float lastRawRms_ = 0.0f;
   float lastVrms_ = 0.0f;
+  bool lastNoSignal_ = false;
 };

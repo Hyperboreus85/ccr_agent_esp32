@@ -55,11 +55,16 @@ bool VoltageSampler::update(VoltageSample& outSample) {
   }
   lastRawRms_ = sqrtf(variance);
   lastVrms_ = (lastRawRms_ * gain_) + offset_;
+  uint16_t rawPkPk = static_cast<uint16_t>(maxRaw_ - minRaw_);
+  bool noSignal = lastVrms_ < Config::kNoSignalVrms;
+  if (Config::kNoSignalRawPkPk > 0 && rawPkPk < Config::kNoSignalRawPkPk) {
+    noSignal = true;
+  }
 
   outSample.raw_rms = lastRawRms_;
-  outSample.vrms = lastVrms_;
-  outSample.vmin = (static_cast<float>(minRaw_) * gain_) + offset_;
-  outSample.vmax = (static_cast<float>(maxRaw_) * gain_) + offset_;
+  outSample.vrms = noSignal ? 0.0f : lastVrms_;
+  outSample.vmin = noSignal ? 0.0f : (static_cast<float>(minRaw_) * gain_) + offset_;
+  outSample.vmax = noSignal ? 0.0f : (static_cast<float>(maxRaw_) * gain_) + offset_;
   outSample.sample_count = static_cast<uint16_t>(count_);
   outSample.flags = FLAG_NONE;
   if (!hasCalibration_) {
@@ -68,6 +73,16 @@ bool VoltageSampler::update(VoltageSample& outSample) {
   if (static_cast<float>(saturatedCount_) / static_cast<float>(count_) > Config::kAdcSaturationThreshold) {
     outSample.flags |= FLAG_ADC_SATURATED;
   }
+  if (noSignal) {
+    outSample.flags |= FLAG_NO_SIGNAL;
+    if (!lastNoSignal_) {
+      Serial.printf("[SAMPLE] NO_SIGNAL vrms=0.00 raw_rms=%.4f pkpk=%u flags=0x%08lx\n",
+                    lastRawRms_,
+                    rawPkPk,
+                    static_cast<unsigned long>(outSample.flags));
+    }
+  }
+  lastNoSignal_ = noSignal;
 
   count_ = 0;
   sum_ = 0;

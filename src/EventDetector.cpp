@@ -13,6 +13,16 @@ void EventDetector::addSample(const VoltageSample& sample) {
     ringFull_ = true;
   }
 
+  if (sample.flags & FLAG_NO_SIGNAL) {
+    eventActive_ = false;
+    postRecording_ = false;
+    sagCounter_ = 0;
+    swellCounter_ = 0;
+    endCounter_ = 0;
+    postCounter_ = 0;
+    return;
+  }
+
   float detectVrms = detectionValue();
 
   if (eventActive_) {
@@ -99,6 +109,9 @@ float EventDetector::detectionValue() const {
   size_t limit = std::min<size_t>(3, available);
   for (size_t i = 0; i < limit; ++i) {
     size_t index = (ringIndex_ + ringBuffer_.size() - 1 - i) % ringBuffer_.size();
+    if (ringBuffer_[index].flags & FLAG_NO_SIGNAL) {
+      continue;
+    }
     sum += ringBuffer_[index].vrms;
     count++;
   }
