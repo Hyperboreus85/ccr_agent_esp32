@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "BatchUploader.h"
+#include "BuildInfo.h"
 #include "Config.h"
 #include "EventDetector.h"
 #include "TimeSync.h"
@@ -99,7 +100,7 @@ void setup() {
   Serial.begin(115200);
   delay(500);
 
-  Serial.printf("CCR ESP32 firmware %s\n", Config::kFirmwareVersion);
+  Serial.printf("CCR ESP32 firmware %s\n", CCR_FW_VERSION_STR);
 
   prefs.begin("calib", false);
   calibGain = prefs.getFloat("gain", 1.0f);
@@ -186,7 +187,10 @@ void loop() {
     }
 
     if (millis() - lastLogMs > kSampleLogIntervalMs) {
-      Serial.printf("[SAMPLE] vrms=%.2f flags=0x%08lx\n", sample.vrms, sample.flags);
+      Serial.printf("[SAMPLE] vrms=%.2f flags=0x%04x%s\n",
+                    sample.vrms,
+                    static_cast<unsigned int>(sample.flags),
+                    (sample.flags & FLAG_NO_SIGNAL) ? " NO_SIGNAL" : "");
       lastLogMs = millis();
     }
   }

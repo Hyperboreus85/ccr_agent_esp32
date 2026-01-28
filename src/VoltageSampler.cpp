@@ -76,10 +76,10 @@ bool VoltageSampler::update(VoltageSample& outSample) {
   if (noSignal) {
     outSample.flags |= FLAG_NO_SIGNAL;
     if (!lastNoSignal_) {
-      Serial.printf("[SAMPLE] NO_SIGNAL vrms=0.00 raw_rms=%.4f pkpk=%u flags=0x%08lx\n",
+      Serial.printf("[SAMPLE] NO_SIGNAL vrms=0.00 raw_rms=%.4f pkpk=%u flags=0x%04x\n",
                     lastRawRms_,
                     rawPkPk,
-                    static_cast<unsigned long>(outSample.flags));
+                    static_cast<unsigned int>(outSample.flags));
     }
   }
   lastNoSignal_ = noSignal;

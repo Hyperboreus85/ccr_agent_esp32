@@ -4,17 +4,17 @@
 #include <vector>
 
 #if defined(__has_include)
-#if __has_include("AutoVersion.generated.h")
-#include "AutoVersion.generated.h"
+#if __has_include("BuildInfo.h")
+#include "BuildInfo.h"
 #endif
 #endif
 
-#ifndef FW_VERSION_STR
-#define FW_VERSION_STR "0.1.0.0000000"
+#ifndef CCR_FW_VERSION_STR
+#define CCR_FW_VERSION_STR "0.1.0.0000000"
 #endif
 
 namespace Config {
-constexpr const char* kFirmwareVersion = FW_VERSION_STR;
+constexpr const char* kFirmwareVersion = CCR_FW_VERSION_STR;
 
 constexpr uint32_t kSampleRateHz = 2500;
 constexpr uint32_t kWindowMs = 200;
@@ -51,14 +51,14 @@ constexpr float kNoSignalVrms = 10.0f;
 constexpr uint16_t kNoSignalRawPkPk = 8; // Optional noise guard (ADC counts).
 } // namespace Config
 
-enum SampleFlags : uint32_t {
+enum SampleFlags : uint16_t {
   FLAG_NONE = 0,
-  FLAG_ADC_SATURATED = 1 << 0,
-  FLAG_NTP_NOT_SYNC = 1 << 1,
-  FLAG_CALIB_MISSING = 1 << 2,
-  FLAG_OUT_OF_RANGE_SENSOR = 1 << 3,
-  FLAG_WIFI_DOWN = 1 << 4,
-  FLAG_NO_SIGNAL = 1 << 5,
+  FLAG_ADC_SATURATED = 1u << 0,
+  FLAG_NTP_NOT_SYNC = 1u << 1,
+  FLAG_CALIB_MISSING = 1u << 2,
+  FLAG_OUT_OF_RANGE_SENSOR = 1u << 3,
+  FLAG_WIFI_DOWN = 1u << 4,
+  FLAG_NO_SIGNAL = 1u << 5,
 };
 
 struct VoltageSample {
@@ -67,7 +67,7 @@ struct VoltageSample {
   float vmin = 0.0f;
   float vmax = 0.0f;
   uint16_t sample_count = 0;
-  uint32_t flags = FLAG_NONE;
+  uint16_t flags = FLAG_NONE;
   float raw_rms = 0.0f;
 };
 
